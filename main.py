@@ -52,7 +52,7 @@ def train(config):
     optimiser_G = torch.optim.Adam(gen.parameters(), lr=config['lr'], betas=(0.0, 0.9))
     optimiser_C = torch.optim.Adam(critic.parameters(), lr=config['lr'], betas=(0.0, 0.9))
 
-    fixed_noise = torch.randn(config['batch_size'], config['z_dim'], 1, 1).to(config['device'])
+    # fixed_noise = torch.randn(config['batch_size'], config['z_dim'], 1, 1).to(config['device'])
 
     writer_real = SummaryWriter(f"logs/real")
     writer_fake = SummaryWriter(f"logs/fake")
@@ -68,7 +68,7 @@ def train(config):
             label = label.to(config['device'])
             batch_size = real.size(0)
 
-            # Train Discriminator --> max log(D(x)) + log(1 - D(G(z)))
+            # Train Discriminator --> max E(D(X)) - E(D(G(X)))
             for _ in range(config['critic_iterations']):
                 noise = torch.randn((batch_size, config['z_dim'], 1, 1)).to(config['device'])
                 fake = gen(noise, label)
@@ -88,7 +88,7 @@ def train(config):
                 for p in critic.parameters():
                     p.data.clamp_(-config['weights_clip'], config['weights_clip'])
 
-            # Train Generator ---> min log(1 - D(G(x))) <---> max log(D(G(x)))
+            # Train Generator ---> max E(D(X))
             output = critic(fake, label).reshape(-1)
             loss_gen = -torch.mean(output)
             gen.zero_grad()
