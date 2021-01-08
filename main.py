@@ -1,6 +1,6 @@
 import torch
 from torchvision import transforms
-from datasets.data import PokemonDataset, DataLoader
+from datasets.data import FashionMNIST, DataLoader
 from models.modules import Generator, Discriminator, initialise_weights
 from torch.utils.tensorboard import SummaryWriter
 import torchvision
@@ -10,15 +10,17 @@ torch.cuda.empty_cache()
 
 hyperparameters = {
     'load_size': 64,
-    'batch_size': 1,
-    'channels': 3,
+    'batch_size': 32,
+    'channels': 1,
     'epoch': 100,
     'device': 'cuda' if torch.cuda.is_available() else 'cpu',
     'lr': 1e-4,
     'z_dim': 100,
-    'critic_iterations': 1,
+    'critic_iterations': 5,
     'weights_clip': 0.01,
-    'lamda': 10
+    'lamda': 10,
+    'num_classes': 10,
+    'embed_size': 100
 }
 
 
@@ -30,13 +32,13 @@ def get_data_loader(config):
         transforms.Normalize([0.5 for _ in range(config['channels'])], [0.5 for _ in range(config['channels'])])
     ])
 
-    dataset = PokemonDataset("datasets/pokemon", transformations)
+    dataset = FashionMNIST()("datasets", transformations)
     return DataLoader(dataset, batch_size=config['batch_size'], shuffle=True)
 
 
 def get_models(config):
-    disc = Discriminator(config['channels'], config['load_size']).to(config['device'])
-    gen = Generator(config['z_dim'], config['channels'], config['load_size']).to(config['device'])
+    disc = Discriminator(config['channels'], config['load_size'], config['num_classes'], 64).to(config['device'])
+    gen = Generator(config['z_dim'], config['channels'], config['load_size'], config['num_classes'], config['embed_size']).to(config['device'])
     initialise_weights(gen)
     initialise_weights(disc)
 
@@ -61,17 +63,19 @@ def train(config):
     critic.train()
 
     for epoch in range(config['epoch']):
-        for batch, real in enumerate(data_loader):
+        for batch, (real, label) in enumerate(data_loader):
             real = real.to(config['device'])
+            label = label.to(config['device'])
+            batch_size = real.size(0)
 
             # Train Discriminator --> max log(D(x)) + log(1 - D(G(z)))
             for _ in range(config['critic_iterations']):
-                noise = torch.randn((config['batch_size'], config['z_dim'], 1, 1)).to(config['device'])
-                fake = gen(noise)
+                noise = torch.randn((batch_size, config['z_dim'], 1, 1)).to(config['device'])
+                fake = gen(noise, label)
 
-                critic_real = critic(real).reshape(-1)
-                critic_fake = critic(fake).reshape(-1)
-                gradient_penality = gp(critic, real, fake, config['device'])
+                critic_real = critic(real, label).reshape(-1)
+                critic_fake = critic(fake, label).reshape(-1)
+                gradient_penality = gp(critic, real, fake, label, config['device'])
 
                 loss_critic = (
                     -(torch.mean(critic_real) - torch.mean(critic_fake))
@@ -85,7 +89,7 @@ def train(config):
                     p.data.clamp_(-config['weights_clip'], config['weights_clip'])
 
             # Train Generator ---> min log(1 - D(G(x))) <---> max log(D(G(x)))
-            output = critic(fake).reshape(-1)
+            output = critic(fake, label).reshape(-1)
             loss_gen = -torch.mean(output)
             gen.zero_grad()
             loss_gen.backward()
@@ -95,11 +99,11 @@ def train(config):
             if batch % 100 == 0:
                 print(
                     f"Epoch [{epoch}/{config['epoch']}] Batch {batch}/{len(data_loader)} \
-                              Loss D: {loss_critic:.4f}, loss G: {loss_gen:.4f}"
+                              Loss D: {loss_critic.item():.4f}, loss G: {loss_gen.item():.4f}"
                 )
 
                 with torch.no_grad():
-                    fake = gen(fixed_noise)
+                    fake = gen(noise, label)
                     # take out (up to) 32 examples
                     img_grid_real = torchvision.utils.make_grid(
                         real[:config['batch_size']], normalize=True
@@ -114,5 +118,4 @@ def train(config):
                 step += 1
 
 
-with torch.autograd.set_detect_anomaly(True):
-    train(hyperparameters)
+train(hyperparameters)
